@@ -1,0 +1,94 @@
+#include "mbed.h"
+#include "PID_Control.hpp" 
+
+#define PRO_DT 0.01f
+#define GAIN_kp 3.8f
+#define GAIN_ki 0.0f
+#define GAIN_kd 0.0f
+
+#define CONTROL_MODE PID_Control::Mode::SPEED//速度型
+//#define CONTROL_MODE PID_Control::Mode::POSITION//位置型
+
+// インスタンスと基本設定
+// 周期 0.01s (10ms), Kp, Ki, Kd, モード（SPEED または POSITION）
+PID_Control speed_pid(SAMPLE_DT, GAIN_KP, GAIN_KI, GAIN_KD, CONTROL_MODE);
+
+BufferedSerial pc(USBTX, USBRX, 115200);
+CAN can(PB_12, PB_13, 1000000);
+// mini_md_lib mini(can, 1);
+//rbms rbms(can,1);
+
+InterruptIn phaseA(PB_4);
+InterruptIn phaseB(PB_5);
+
+Thread pid_thread;
+volatile int counter = 0;
+float set_spd = 0;
+float current_rpm = 0;
+
+//エンコーダ処理 (割り込み)
+void a_phase_isr() { (phaseA != phaseB) ? counter++ : counter--; }
+void b_phase_isr() { (phaseA == phaseB) ? counter++ : counter--; }
+
+//PID制御スレッド
+void pid_task() {
+    const float ppr = 200.0f;
+    const float deg_unit = 360.0f / (ppr * 4.0f);
+    int last_cnt = 0;
+
+    // エンコーダ割り込み開始
+    phaseA.rise(&a_phase_isr); phaseA.fall(&a_phase_isr);
+    phaseB.rise(&b_phase_isr); phaseB.fall(&b_phase_isr);
+
+    // PIDの個別設定（必要なら）
+    speed_pid.Output_limit(-10000.0f, 10000.0f);
+    speed_pid.Integral_limit(1000.0f);
+
+    while(true) {
+        // 現在のカウントを取得（割り込み禁止で安全に）
+        core_util_critical_section_enter();
+        int now_cnt = counter;
+        core_util_critical_section_exit();
+
+        // 速度(RPM)の計算
+        float delta_cnt = (float)(now_cnt - last_cnt) * -1.0f;
+        float deg_spd = (delta_cnt * deg_unit) / 0.01f; // 0.01s は _dt と合わせる
+        current_rpm = deg_spd * 60.0f / 360.0f;
+        last_cnt = now_cnt;
+
+        // ライブラリの呼び出し
+        float spd_output = speed_pid.update(set_spd, current_rpm);
+
+        // int motor_data[1] = {(int)spd_output};
+        // mini.send(motor_data);
+
+        ThisThread::sleep_for(10ms);
+    }
+}
+
+int main() {
+    pid_thread.start(pid_task);
+
+    printf("PID Control System Started.\r\n");
+
+    while(true) {
+        if(pc.readable()) {
+            char c;
+            pc.read(&c, 1);
+            if(c == 'w') set_spd = 180.0f;
+            else if(c == 's') set_spd = -100.0f;
+            else if(c == 'q') {
+                set_spd = 0;
+                speed_pid.reset(); // 停止時は積分値などをリセット
+            }
+            // 実行中にゲインを変えるデバッグ例
+            else if(c == 'u') {
+                speed_pid.set_gains(4.0f, 0.08f, 0.1f);
+                printf("Gain Updated!\r\n");
+            }
+        }
+
+        printf(">Target:%.1f  >RPM:%.1f\r\n", set_spd, current_rpm);
+        ThisThread::sleep_for(50ms);
+    }
+}
