@@ -24,30 +24,40 @@ void PID_Control::setMode(Mode mode){
     }
 }
 
-float PID_Control::update(float target,float current){
+float PID_Control::update(float target, float current) {
     float error = target - current;
-
-    integral += (error + pre_error) * _dt / 2.0f;
-
-    if(integral > i_limit) integral = i_limit;
-    if(integral < -i_limit)integral = -i_limit;
-
-    float derivative = (error - pre_error) / _dt;
     float output_val = 0;
 
     if (_mode == Mode::SPEED) {
-        pre_mv = (error * _kp) + (integral * _ki) + (derivative * _kd);
-        output_val = pre_mv;
-    }else{
-        pre_mv=(error * _kp) + (integral * _ki) + (derivative * _kd);
+        // 速度型（増分型）PID
+        float dmv = _kp * (error - pre_error) 
+                  + _ki * error * _dt 
+                  + _kd * (error - 2.0f * pre_error + pre2_error) / _dt;
+        
+        output_val = pre_mv + dmv;
+    } else {
+        // 位置型PID
+        integral += (error + pre_error) * _dt / 2.0f;
+        
+        // Iリミット
+        if(i_limit > 0) {
+            if(integral > i_limit) integral = i_limit;
+            if(integral < -i_limit) integral = -i_limit;
+        }
+        
+        float derivative = (error - pre_error) / _dt;
+        output_val = (error * _kp) + (integral * _ki) + (derivative * _kd);
     }
 
-    if (pre_mv > _max_out) pre_mv = _max_out;
-    if (pre_mv < _min_out) pre_mv = _min_out;
+    // 出力リミッター
+    if (output_val > _max_out) output_val = _max_out;
+    if (output_val < _min_out) output_val = _min_out;
 
-    pre_mv = output_val;
-
+    // 履歴の更新
+    pre2_error = pre_error;
     pre_error = error;
+    pre_mv = output_val; 
+
     return output_val;
 }
 
