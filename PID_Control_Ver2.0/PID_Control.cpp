@@ -81,9 +81,5 @@ void PID_Control<T>::reset() {
     _prev_output = 0;
 }
 
-// ==========================================
-// ★重要：明示的実体化
-// これを書かないと main.cpp からリンクするときにエラーになります
-// ==========================================
 template class PID_Control<float>;
 template class PID_Control<double>;
