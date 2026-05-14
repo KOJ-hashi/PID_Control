@@ -15,7 +15,7 @@ class PID_Control{
     void set_mode(Mode mode);
     void set_lpf_enabled(bool enabled);
     void set_alpha(T alpha);
-    void update(T target, T current);
+    T update(T target, T current);
     void reset();
 
     private:
