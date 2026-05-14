@@ -1,68 +1,94 @@
-#include "mbed.h"
-#include "PID_Control.hpp"
-#include <algorithm>
+#include "PID_Control.h"
 
-PID_Control::PID_Control(float dt,float kp,float ki,float kd,Mode mode )
-:_dt(dt),_kp(kp),_ki(ki),_kd(kd),_mode(mode),integral(0),pre_error(0),pre2_error(0),pre_mv(0),_min_out(-10000.0f),_max_out(10000.f){}
+template <typename T>
+PID_Control<T>::PID_Control(T kp, T ki, T kd, T dt, T min_out, T max_out, T alpha)
+    : _kp(kp), _ki(ki), _kd(kd), _dt(dt), 
+      _min_out(min_out), _max_out(max_out), _alpha(alpha),
+      _mode(Mode::POSITION), _use_lpf(true), _use_shortest_path(true),
+      _integral(0), _prev_error(0), _prev_prev_error(0), 
+      _low_pass_deriv(0), _prev_output(0) {}
 
-void PID_Control::set_gains(float kp, float ki, float kd){//mainでゲインを入力する
-    _kp = kp , _ki = ki , _kd = kd;
+template <typename T>
+void PID_Control<T>::set_mode(Mode mode) {
+    _mode = mode;
+    reset();
 }
 
-void PID_Control::Output_limit(float min, float max){
-        _min_out = min;     _max_out = max;
+template <typename T>
+void PID_Control<T>::set_lpf_enabled(bool enabled) {
+    _use_lpf = enabled;
 }
 
-void PID_Control::Integral_limit(float limit){
-    i_limit = limit;
+template <typename T>
+void PID_Control<T>::set_shortest_path(bool enabled) {
+    _use_shortest_path = enabled;
 }
 
-void PID_Control::setMode(Mode mode){
-    if(_mode != mode){
-        _mode = mode;
-        reset();
+template <typename T>
+void PID_Control<T>::set_alpha(T alpha) {
+    _alpha = alpha;
+}
+
+template <typename T>
+T PID_Control<T>::update(T target, T current) {
+    T error = target - current;
+
+    // 最短経路フラグが有効な場合のみ、±190度の範囲に丸める
+    if (_use_shortest_path) {
+        while (error > 190.0f)  error -= 360.0f;
+        while (error < -190.0f) error += 360.0f;
     }
-}
 
-float PID_Control::update(float target, float current) {
-    float error = target - current;
-    float output_val = 0;
+    T output = 0;
 
-    if (_mode == Mode::SPEED) {
-        // 速度型（増分型）PID
-        float dmv = _kp * (error - pre_error) 
-                  + _ki * error * _dt 
-                  + _kd * (error - 2.0f * pre_error + pre2_error) / _dt;
-        
-        output_val = pre_mv + dmv;
+    if (_mode == Mode::POSITION) {
+        _integral += error * _dt;
+        if (_integral * _ki > _max_out) _integral = _max_out / _ki;
+        if (_integral * _ki < _min_out) _integral = _min_out / _ki;
+
+        T raw_diff = (error - _prev_error) / _dt;
+        if (_use_lpf) {
+            _low_pass_deriv = (_alpha * raw_diff) + ((1.0f - _alpha) * _low_pass_deriv);
+        } else {
+            _low_pass_deriv = raw_diff;
+        }
+        output = (_kp * error) + (_ki * _integral) + (_kd * _low_pass_deriv);
+
     } else {
-        // 位置型PID
-        integral += (error + pre_error) * _dt / 2.0f;
+        // --- 速度型 PID ---
+        T p_delta = _kp * (error - _prev_error);
+        T i_delta = _ki * error * _dt;
+        T d_raw_delta = _kd * (error - 2 * _prev_error + _prev_prev_error) / _dt;
         
-        // Iリミット
-        if(i_limit > 0) {
-            if(integral > i_limit) integral = i_limit;
-            if(integral < -i_limit) integral = -i_limit;
+        if (_use_lpf) {
+            _low_pass_deriv = (_alpha * d_raw_delta) + ((1.0f - _alpha) * _low_pass_deriv);
+        } else {
+            _low_pass_deriv = d_raw_delta;
         }
         
-        float derivative = (error - pre_error) / _dt;
-        output_val = (error * _kp) + (integral * _ki) + (derivative * _kd);
+        _prev_output += p_delta + i_delta + _low_pass_deriv;
+        output = _prev_output;
     }
 
-    // 出力リミッター
-    if (output_val > _max_out) output_val = _max_out;
-    if (output_val < _min_out) output_val = _min_out;
+    if (output > _max_out) output = _max_out;
+    if (output < _min_out) output = _min_out;
+    
+    _prev_output = output;
+    _prev_prev_error = _prev_error;
+    _prev_error = error;
 
-    // 履歴の更新
-    pre2_error = pre_error;
-    pre_error = error;
-    pre_mv = output_val; 
-
-    return output_val;
+    return output;
 }
 
-void PID_Control::reset(){
-    integral = 0.0f;
-    pre_error = 0.0f;
-    pre_mv = 0.0f;
+template <typename T>
+void PID_Control<T>::reset() {
+    _integral = 0;
+    _prev_error = 0;
+    _prev_prev_error = 0;
+    _low_pass_deriv = 0;
+    _prev_output = 0;
 }
+
+// 明示的実体化
+template class PID_Control<float>;
+template class PID_Control<double>;
