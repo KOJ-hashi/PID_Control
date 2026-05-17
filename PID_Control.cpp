@@ -33,10 +33,10 @@ template <typename T>
 T PID_Control<T>::update(T target, T current) {
     T error = target - current;
 
-    // 最短経路フラグが有効な場合のみ、±180度の範囲に丸める（誤差があった方がいいかも）
+    // 最短経路フラグが有効な場合のみ、±190度の範囲に丸める
     if (_use_shortest_path) {
-        while (error > 180.0f)  error -= 360.0f;
-        while (error < -180.0f) error += 360.0f;
+        while (error > 190.0f)  error -= 360.0f;
+        while (error < -190.0f) error += 360.0f;
     }
 
     T output = 0;
