@@ -15,6 +15,12 @@ public:
     void set_lpf_enabled(bool enabled);
     void set_shortest_path(bool enabled); 
     void set_alpha(T alpha);
+    
+    // S字制御
+    void set_scurve_enabled(bool enabled);
+    void set_scurve_params(T max_jerk, T max_accel);
+
+
     T update(T target, T current);
     void reset();
 
@@ -30,6 +36,13 @@ private:
     T _prev_prev_error;
     T _low_pass_deriv;
     T _prev_output;
+
+    // S字制御用の内部変数 
+    bool _use_scurve;
+    T _max_jerk;
+    T _max_accel;
+    T _scurve_speed; // フィルタ通過後のターゲット速度
+    T _scurve_accel; // 現在の加速度
 };
 
 #endif
