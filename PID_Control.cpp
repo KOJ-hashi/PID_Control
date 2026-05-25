@@ -1,4 +1,5 @@
 #include "PID_Control.h"
+#include <cmath> 
 
 template <typename T>
 PID_Control<T>::PID_Control(T kp, T ki, T kd, T dt, T min_out, T max_out, T alpha)
@@ -6,37 +7,57 @@ PID_Control<T>::PID_Control(T kp, T ki, T kd, T dt, T min_out, T max_out, T alph
       _min_out(min_out), _max_out(max_out), _alpha(alpha),
       _mode(Mode::POSITION), _use_lpf(true), _use_shortest_path(true),
       _integral(0), _prev_error(0), _prev_prev_error(0), 
-      _low_pass_deriv(0), _prev_output(0) {}
+      _low_pass_deriv(0), _prev_output(0),
+      // 初期値を追記
+      _use_scurve(false), _max_jerk(40000.0f), _max_accel(2000.0f),
+      _scurve_speed(0), _scurve_accel(0) {}
 
+// S字制御の設定関数
 template <typename T>
-void PID_Control<T>::set_mode(Mode mode) {
-    _mode = mode;
-    reset();
+void PID_Control<T>::set_scurve_enabled(bool enabled) {
+    _use_scurve = enabled;
+    if (!enabled) {
+        // 無効化されたときは内部状態をクリアしておく
+        _scurve_speed = 0;
+        _scurve_accel = 0;
+    }
 }
 
 template <typename T>
-void PID_Control<T>::set_lpf_enabled(bool enabled) {
-    _use_lpf = enabled;
-}
-
-template <typename T>
-void PID_Control<T>::set_shortest_path(bool enabled) {
-    _use_shortest_path = enabled;
-}
-
-template <typename T>
-void PID_Control<T>::set_alpha(T alpha) {
-    _alpha = alpha;
+void PID_Control<T>::set_scurve_params(T max_jerk, T max_accel) {
+    _max_jerk = max_jerk;
+    _max_accel = max_accel;
 }
 
 template <typename T>
 T PID_Control<T>::update(T target, T current) {
-    T error = target - current;
+    
+    // S字フラグが真なら、入力された target をS字に加工する
+    T final_target = target;
+    if (_use_scurve) {
+        // 1. 必要加速度の計算と制限
+        T target_accel = (target - _scurve_speed) / _dt;
+        if (target_accel > _max_accel)  target_accel = _max_accel;
+        if (target_accel < -_max_accel) target_accel = -_max_accel;
 
-    // 最短経路フラグが有効な場合のみ、±180度の範囲に丸める（誤差があった方がいいかも）
+        // 2. ジャーク（加速度の変化量）の計算と制限
+        T jerk = (target_accel - _scurve_accel) / _dt;
+        if (jerk > _max_jerk)  jerk = _max_jerk;
+        if (jerk < -_max_jerk) jerk = -_max_jerk;
+
+        // 3. 積分して新たな滑らかターゲット速度を算出
+        _scurve_accel += jerk * _dt;
+        _scurve_speed += _scurve_accel * _dt;
+        
+        final_target = _scurve_speed; // PIDの計算にはこのS字速度を使う
+    }
+
+    // 従来の target を使用していた部分を、すべて final_target に置き換える
+    T error = final_target - current;
+
     if (_use_shortest_path) {
-        while (error > 180.0f)  error -= 360.0f;
-        while (error < -180.0f) error += 360.0f;
+        while (error > 190.0f)  error -= 360.0f;
+        while (error < -190.0f) error += 360.0f;
     }
 
     T output = 0;
@@ -67,6 +88,11 @@ T PID_Control<T>::update(T target, T current) {
         }
         
         _prev_output += p_delta + i_delta + _low_pass_deriv;
+        
+        // 前回の回答通りのワインドアップ対策
+        if (_prev_output > _max_out) _prev_output = _max_out;
+        if (_prev_output < _min_out) _prev_output = _min_out;
+        
         output = _prev_output;
     }
 
@@ -87,6 +113,9 @@ void PID_Control<T>::reset() {
     _prev_prev_error = 0;
     _low_pass_deriv = 0;
     _prev_output = 0;
+    // S字状態もリセット
+    _scurve_speed = 0;
+    _scurve_accel = 0;
 }
 
 // 明示的実体化
