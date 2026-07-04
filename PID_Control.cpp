@@ -1,9 +1,10 @@
 #include "PID_Control.h"
+#include <cmath>
 
 template <typename T>
-PID_Control<T>::PID_Control(T kp, T ki, T kd, T dt, T min_out, T max_out, T alpha)
+PID_Control<T>::PID_Control(T kp, T ki, T kd, T dt, T min_out, T max_out, T alpha, T tolerance)
     : _kp(kp), _ki(ki), _kd(kd), _dt(dt), 
-      _min_out(min_out), _max_out(max_out), _alpha(alpha),
+      _min_out(min_out), _max_out(max_out), _alpha(alpha), _tolerance(tolerance),
       _mode(Mode::POSITION), _use_lpf(true), _use_shortest_path(true),
       _integral(0), _prev_error(0), _prev_prev_error(0), 
       _low_pass_deriv(0), _prev_output(0) {}
@@ -30,13 +31,23 @@ void PID_Control<T>::set_alpha(T alpha) {
 }
 
 template <typename T>
+void PID_Control<T>::set_tolerance(T tolerance){
+    _tolerance = tolerance;
+}
+template <typename T>
 T PID_Control<T>::update(T target, T current) {
     T error = target - current;
 
-    // 最短経路フラグが有効な場合のみ、±180度の範囲に丸める（誤差があった方がいいかも）
+    // 最短経路フラグが有効な場合のみ、±190度の範囲に丸める
     if (_use_shortest_path) {
-        while (error > 180.0f)  error -= 360.0f;
-        while (error < -180.0f) error += 360.0f;
+        while (error > 190.0f)  error -= 360.0f;
+        while (error < -190.0f) error += 360.0f;
+    }
+
+    //許容範囲
+    if(std::abs(error) < _tolerance){
+        reset();
+        return static_cast<T>(0);
     }
 
     T output = 0;
